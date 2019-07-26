@@ -1,0 +1,29 @@
+--find mirrored databases on principal or mirrored instance
+--script to find mirrored databases on principal or mirrored instance
+
+SELECT d.name, dm.mirroring_role_desc, dm.mirroring_state_desc, dm.database_id, dm.mirroring_state, dm.mirroring_role, dm.mirroring_partner_instance, dm.mirroring_partner_name
+FROM    [sys].[database_mirroring] dm
+INNER JOIN [sys].[databases] d
+ON d.database_id = dm.database_id
+WHERE mirroring_state_desc  IS NOT NULL;
+
+
+--Part two: Find all mirroring endpoints on an instance
+
+SELECT [name]
+      ,[protocol]
+      ,[protocol_desc]
+      ,[type]
+      ,[type_desc]
+      ,[state]
+      ,[state_desc]
+      ,[is_admin_endpoint]
+      ,[role]
+      ,[role_desc]
+      ,[is_encryption_enabled]
+      ,[connection_auth]
+      ,[connection_auth_desc]
+      ,[certificate_id]
+      ,[encryption_algorithm]
+      ,[encryption_algorithm_desc]
+  FROM [master].[sys].[database_mirroring_endpoints];

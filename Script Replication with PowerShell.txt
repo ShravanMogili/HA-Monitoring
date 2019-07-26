@@ -1,0 +1,208 @@
+Script Replication with PowerShell
+
+
+http://www.sqlservercentral.com/blogs/sqlserver365/2013/02/14/script-replication-with-powershell/
+
+
+
+I promised you some PowerShell scripts this year and this post is the first one.  I can see the value PowerShell can bring, but find it equally frustrating.  I don뭪 know the syntax very well or all the command lets and personally for 99.9% of my daily tasks I can achieve the desired results in T-SQL.  I would say that PowerShell has much more of an appeal to Domain Administrators, specifically those who manage large domains with tens or hundreds of thousands of objects.  Having said that, I have stuck with PowerShell and do try to have a dabble when the opportunity arises.
+
+The script in this post will script your replication topology to a file for use in the event of DR.  Why? Well, having a solid DR plan is by no means an easy task, and without testing your DR plan I can say with some certainty that there will be something you have missed, whether it is a login, firewall port or out of date replication topology, that is where this post comes in.  I am a massive fan of replication, having used it in every single one of my DBA positions to achieve a multitude of requirements but that is not to say it hasn뭪 caused me any problems, I have spent many a late night reinitialising subscriptions and troubleshooting seemingly unknown problems.
+
+Replication is one area that is often overlooked in a DR scenario, do you have up to date scripts to recreate your replication topology?  No?  You뭨e not telling me that you are going to recreate all those publications using the GUI during DR are you?  All those filtered articles, all those keep existing object unchanged settings and not to forget the articles with do not replicate delete statements set.
+
+The PowerShell script is below, simply save it to a file called ScriptReplication.ps1;
+
+#Load command-line parameters - if they exist
+param ([string]$sqlserver, [string]$filename)
+
+#Reference RMO Assembly
+[reflection.assembly]::LoadWithPartialName("Microsoft.SqlServer.Replication") | out-null
+[reflection.assembly]::LoadWithPartialName("Microsoft.SqlServer.Rmo") | out-null
+
+function errorhandler([string]$errormsg)
+{
+    writetofile ("-- Replication Script Generator run at: " + (date)) $filename 1
+    writetofile ("-- [Replication Script ERROR] " + $errormsg) $filename 0
+}
+
+function writetofile([string]$text, [string]$myfilename, [int]$cr_prefix)
+{
+    if ($cr_prefix -eq 1) { "" >> $myfilename }
+    $text >> $myfilename
+}
+
+function initializefile([string]$myfilename)
+{
+    "" > $myfilename
+}
+
+trap {errorhandler($_); Break}
+
+#Deal with absent parameters
+[string] $hostname=hostname
+if ($sqlserver -eq "") {$sqlserver = read-host -prompt "Please enter the server name or leave blank for Hostname"}
+if ($filename -eq "")  {$filename = read-host -prompt "Please enter the file name (eg 'c:\ReplicationBackupScript.sql')..."}
+if ($sqlserver -eq "")   {$sqlserver = $hostname}
+if ($filename -eq "")   {$filename = "c:\ReplicationBackupScript.sql"}
+
+# Clear file contents
+if (Test-Path  ($filename)) {Clear-Content $filename}
+
+$repsvr=New-Object "Microsoft.SqlServer.Replication.ReplicationServer" $sqlserver
+
+initializefile $filename
+
+# if we don't have any replicated databases then there's no point in carrying on
+if ($repsvr.ReplicationDatabases.Count -eq 0)
+{
+    writetofile ("-- Replication Script Generator run at: " + (date)) $filename 0
+    writetofile "-- ZERO replicated databases on $sqlserver!!!" $filename 1
+    EXIT
+}
+
+# similarly, if we don't have any publications then there's no point in carrying on
+[int] $Count_Tran_Pub = 0
+[int] $Count_Merge_Pub = 0
+
+foreach($replicateddatabase in $repsvr.ReplicationDatabases)
+{
+        $Count_Tran_Pub = $Count_Tran_Pub + $replicateddatabase.TransPublications.Count
+        $Count_Merge_Pub = $Count_Merge_Pub + $replicateddatabase.MergePublications.Count
+}
+
+if (($Count_Tran_Pub + $Count_Merge_Pub) -eq 0)
+{
+    writetofile ("-- Replication Script Generator run at: " + (date)) $filename 0
+    writetofile "-- ZERO Publications on $sqlserver!!!" $filename 1
+    EXIT
+}
+
+# if we got this far we know that there are some publications so we'll script them out
+# the $scriptargs controls exactly what the script contains
+# for a full list of the $scriptargs see the end of this script
+$scriptargs =[Microsoft.SqlServer.Replication.scriptoptions]::Creation `
+-bor  [Microsoft.SqlServer.Replication.scriptoptions]::IncludeArticles `
+-bor  [Microsoft.SqlServer.Replication.scriptoptions]::IncludePublisherSideSubscriptions `
+-bor  [Microsoft.SqlServer.Replication.scriptoptions]::IncludeSubscriberSideSubscriptions
+
+writetofile ("-- Replication Script Generator run at: " + (date)) $filename 0
+writetofile "-- PUBLICATIONS ON $sqlserver" $filename 1
+writetofile "-- TRANSACTIONAL PUBLICATIONS ($Count_Tran_Pub)" $filename 1
+
+foreach($replicateddatabase in $repsvr.ReplicationDatabases)
+{
+    if ($replicateddatabase.TransPublications.Count -gt 0)
+    {
+        foreach($tranpub in $replicateddatabase.TransPublications)
+        {
+            writetofile "/********************************************************************************" $filename 0
+            writetofile ("***** Writing to file script for publication: " + $tranpub.Name) $filename 0
+            writetofile "********************************************************************************/" $filename 0
+            [string] $myscript=$tranpub.script($scriptargs) 
+            writetofile $myscript $filename 0
+        }
+    }
+}
+
+writetofile "-- MERGE PUBLICATIONS ($Count_Merge_Pub)" $filename 1
+
+foreach($replicateddatabase in $repsvr.ReplicationDatabases)
+{
+    if ($replicateddatabase.MergePublications.Count -gt 0)
+    {
+        foreach($mergepub in $replicateddatabase.MergePublications)
+        {
+            writetofile "/********************************************************************************" $filename 0
+            writetofile ("***** Writing to file script for publication: " + $mergepub.Name) $filename 0
+            writetofile "********************************************************************************/" $filename 0
+            [string] $myscript=$mergepub.script($scriptargs) 
+            writetofile $myscript $filename 0
+        }
+    }
+}
+
+You can then copy this to a Server you want to script your replication topology from and create a SQL Agent job to execute the script.  I have just the script below, It will execute the PowerShell script and email an operator called DBA in the event of a failure.  You will need to;
+
+�         Update the operator
+�         Update ServerNameHere with the name of the server you are scripting replication from
+
+NOTE - If this is a named instance then this is simply in the form of ServerName\InstanceName
+
+�         Update the schedule accordingly
+�         Update the path to the PowerShell script accordingly
+�         Update the path to the CreateReplication.sql file accordingly
+
+Note - I run this at 06:00 every Monday Wednesday and Friday, I also run this manually if a change to any of the publications has changed.  I also have a synchronisation process which copies this over to the DR Server.
+
+USE [msdb]
+GO
+
+/****** Object:  Job [Maintenance - ScriptReplication]    Script Date: 02/14/2013 13:39:27 ******/
+BEGIN TRANSACTION
+DECLARE@ReturnCode INT
+SELECT@ReturnCode = 0
+/****** Object:  JobCategory [[Uncategorized (Local)]]]    Script Date: 02/14/2013 13:39:27 ******/
+IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'[Uncategorized (Local)]' ANDcategory_class=1)
+BEGIN
+EXEC@ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'[Uncategorized (Local)]'
+IF (@@ERROR <> 0 OR @ReturnCode <>0) GOTOQuitWithRollback
+
+END
+
+DECLARE @jobId BINARY(16)
+EXEC@ReturnCode =  msdb.dbo.sp_add_job @job_name=N'Maintenance - ScriptReplication',
+            @enabled=1,
+            @notify_level_eventlog=0,
+            @notify_level_email=2,
+            @notify_level_netsend=0,
+            @notify_level_page=0,
+            @delete_level=0,
+            @description=N'This job will script the replication topology to G:\Powershell\ScriptReplication\CreateReplication.sql for use in DR',
+            @category_name=N'[Uncategorized (Local)]',
+            @owner_login_name=N'sa',
+            @notify_email_operator_name=N'DBA', @job_id = @jobId OUTPUT
+IF (@@ERROR <> 0 OR @ReturnCode <>0) GOTOQuitWithRollback
+/****** Object:  Step [Script Replication]    Script Date: 02/14/2013 13:39:28 ******/
+EXEC@ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Script Replication',
+            @step_id=1,
+            @cmdexec_success_code=0,
+            @on_success_action=1,
+            @on_success_step_id=0,
+            @on_fail_action=2,
+            @on_fail_step_id=0,
+            @retry_attempts=0,
+            @retry_interval=0,
+            @os_run_priority=0, @subsystem=N'PowerShell',
+            @command=N'G:\Powershell\ScriptReplication\ScriptReplication.ps1 -sqlserver ''ServerNameHere'' -FileName ''G:\Powershell\ScriptReplication\CreateReplication.sql''',
+            @database_name=N'master',
+            @flags=40
+IF (@@ERROR <> 0 OR @ReturnCode <>0) GOTOQuitWithRollback
+EXEC@ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+IF (@@ERROR <> 0 OR @ReturnCode <>0) GOTOQuitWithRollback
+EXEC@ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@jobId, @name=N'MWF - 06:00',
+            @enabled=1,
+            @freq_type=8,
+            @freq_interval=42,
+            @freq_subday_type=1,
+            @freq_subday_interval=0,
+            @freq_relative_interval=0,
+            @freq_recurrence_factor=1,
+            @active_start_date=20121024,
+            @active_end_date=99991231,
+            @active_start_time=60000,
+            @active_end_time=235959
+IF (@@ERROR <> 0 OR @ReturnCode <>0) GOTOQuitWithRollback
+EXEC@ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @jobId, @server_name = N'(local)'
+IF (@@ERROR <> 0 OR @ReturnCode <>0) GOTOQuitWithRollback
+COMMIT TRANSACTION
+GOTO EndSave
+QuitWithRollback:
+    IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
+EndSave:
+
+GO
+
+Enjoy!
+
+Chris

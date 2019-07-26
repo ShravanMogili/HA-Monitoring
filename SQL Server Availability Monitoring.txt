@@ -1,0 +1,176 @@
+SQL Server Availability Monitoring
+
+http://www.sqlservercentral.com/scripts/Miscellaneous/31862/
+
+This VB script will attempt to make a connection to all SQL Servers enumerated in the SQLInventory table over Named Pipes and TCP\IP. If a SQL Instance is listed, it will attempt TCP\IP connections using both port and instance name. Once the connection is established to each server using each protocol, the script will query sysprocesses to verify the connection is over the right protocol, to ensure that no redirection using aliases is taking place. Any connection failures will be dumped into an email, with the failure message. Once all connections have been attempted, the email will be sent, assuming a failure occurred.
+
+If the NPDisabled or TCPDisabled bits are set in the SQLInventory table, that protocol will not be monitored for that server.
+
+
+On Error Resume Next
+
+strDBListserver = "INSERT SERVER for INVENTORY DATABASE HERE"
+
+txtEmailbody = ""
+Set cnDBList = CreateObject("ADODB.Connection")
+Set cnDBTest = CreateObject("ADODB.Connection")
+Set rsDBList = CreateObject("ADODB.Recordset")
+Set rsDBTest = CreateObject("ADODB.Recordset")
+
+strDBListconn = "Provider='sqloledb';Data Source=" & strDBListserver & ";Integrated Security='SSPI';Initial Catalog='zDBA';Network Library=dbmssocn"
+strDBList = "SELECT * FROM zDBA..SQLInventory"
+
+cnDBList.Open strDBListconn
+rsDBList.open strDBList, cnDBList,0,2
+
+txtEmailbody = Now() & vbnewline & vbnewline
+intCounter = 0
+
+While rsDBList.EOF = False
+	If rsDBLIst("instancename") <> "" Then
+		fullname = rsDBList("hostname") & "\" & rsDBList("instancename")
+	Else
+		fullname = rsDBList("hostname")
+	End If 
+
+'txtEmailbody = txtEmailbody & rsDBLIst("hostname") & " starting at " & Now() & vbnewline
+	' Test Named Pipes Connectivity    
+	If rsDBList("NPDisabled") = 0 Then
+		strDBtestconn = "Provider='sqloledb';Data Source=" & fullname & ";Integrated Security='SSPI';Initial Catalog='master';Network Library=dbnmpntw;Connect Timeout=20"
+		cnDBTest.Open strDBTestconn
+		If err.number <> 0 Then
+			txtEmailbody = txtEmailbody & rsDBList("hostname") & " | Named Pipes | " & err.number & " | " & err.source & vbnewline & err.description & vbnewline
+			err.clear
+			intCounter = intCounter + 1
+		Else
+			strDBTestQuery = "SELECT * FROM master..sysprocesses where spid = @@spid"
+			rsDBTest.open strDBTestQuery, cnDBTest,0,2
+			If err.number <> 0 Then
+				txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | Named Pipes | " & err.number & " | " & err.source & vbnewline & err.description & vbnewline
+				err.clear
+				intCounter = intCounter + 1
+			Else
+				If rsDBTest("net_library") <> "Named Pipes " and rsDBTest("net_library") <> "SSNMPN70.DLL" Then
+					txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | Named Pipes |" & rsDBTest("net_library") & " | Protocols don't match " & vbnewline
+					intCounter = intCounter + 1
+				End If
+			End If
+		End If
+	End If
+
+	If rsDBTest.State = 1 then
+        	rsDBTest.Close
+	End If
+	If cnDBTest.State = 1 then
+        	cnDBTest.Close
+	End If 
+
+	' Test TCP\IP Connectivity using instance name
+	If rsDBList("TCPDisabled") = 0 then
+		strDBtestconn = "Provider='sqloledb';Data Source=" & fullname & ";Integrated Security='SSPI';Initial Catalog='master';Network Library=dbmssocn;Connect Timeout=20"
+		cnDBTest.Open strDBTestconn
+		If err.number <> 0 Then
+			txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | TCP Instance Name | " & err.number & " | " & err.source & vbnewline & err.description & vbnewline
+			err.clear
+			intCounter = intCounter + 1
+		Else
+			strDBTestQuery = "SELECT * FROM master..sysprocesses where spid = @@spid"
+			rsDBTest.open strDBTestQuery, cnDBTest,0,2
+			If err.number <> 0 Then
+				txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | TCP Instance Name | " & err.number & " | " & err.source & vbnewline & err.description & vbnewline
+				err.clear
+				intCounter = intCounter + 1
+			Else
+				If rsDBTest("net_library") <> "TCP/IP      " and rsDBTest("net_library") <> "SSMSSO70.DLL" Then
+					txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | TCP Instance Name | " & rsDBTest("net_library") & " | Protocols don't match " & vbnewline
+					intCounter = intCounter + 1
+				End If
+			End If
+		End If
+	
+		If rsDBTest.State = 1 then
+       	 		rsDBTest.Close
+		End If
+		If cnDBTest.State = 1 then
+	        	cnDBTest.Close
+		End If 
+
+	' Test TCP\IP Connectivity using port
+		strDBtestconn = "Provider='sqloledb';Data Source=" & rsDBList("hostname") & "," & rsDBList("tcpport") & ";Integrated Security='SSPI';Initial Catalog='master';Network Library=dbmssocn;Connect Timeout=20"	
+		cnDBTest.Open strDBTestconn
+		If err.number <> 0 Then
+			txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | TCP Port | " & err.number & " | " & err.source & vbnewline & err.description & vbnewline
+			err.clear
+			intCounter = intCounter + 1
+		Else
+			strDBTestQuery = "SELECT * FROM master..sysprocesses where spid = @@spid"
+			rsDBTest.open strDBTestQuery, cnDBTest,0,2
+			If err.number <> 0 Then
+				txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | TCP Port | " & err.number & " | " & err.source & vbnewline & err.description & vbnewline
+				err.clear
+				intCounter = intCounter + 1
+			Else
+				If rsDBTest("net_library") <> "TCP/IP      " and rsDBTest("net_library") <> "SSMSSO70.DLL" Then
+					txtEmailbody = txtEmailbody &  rsDBList("hostname") & " | TCP Port |" & rsDBTest("net_library") & " | Protocols don't match " & vbnewline
+					intCounter = intCounter + 1
+				End If
+			End If
+		End If
+
+		If rsDBTest.State = 1 then
+        		rsDBTest.Close
+		End If
+		If cnDBTest.State = 1 then
+        		cnDBTest.Close
+		End If 
+	End if
+	
+	rsDBList.movenext
+
+Wend
+
+txtEmailbody = txtEmailbody & vbnewline & Now()
+
+If rsDBList.State = 1 then
+        rsDBList.Close
+End If
+If cnDBList.State = 1 then
+        cnDBList.Close
+End If 
+
+If intCounter > 0 Then
+	Set objEmail = CreateObject("CDO.Message")
+	objEmail.From = "SQL_Availability_Monitoring"
+	objEmail.To = "INSERT SMTP EMAIL ADDRESS HERE"
+	objEmail.Subject = "SQL_Availability_Report"
+	objemail.textbody = txtEmailbody
+	objEmail.Configuration.Fields.Item ("http://schemas.microsoft.com/cdo/configuration/sendusing") = 2
+	objEmail.Configuration.Fields.Item ("http://schemas.microsoft.com/cdo/configuration/smtpserver") = "INSERT NAME OF SMTP SERVER HERE, must not require authentication" 
+	objEmail.Configuration.Fields.Item ("http://schemas.microsoft.com/cdo/configuration/smtpserverport") = 25
+	objEmail.Configuration.Fields.Update
+	objEmail.Send
+End if
+
+Set rsDBList = Nothing
+Set cnDBList = Nothing
+Set rsDBTest = Nothing
+Set cnDBTest = Nothing'
+
+
+
+
+--- Table Creation 
+
+CREATE TABLE [dbo].[SQLInventory] (
+	[Hostname] [varchar] (50)  ,
+	[Instancename] [varchar] (50) AS NULL ,
+	[TCPPort] [int] NULL ,
+	[Category] [varchar] (50) NOT NULL ,
+	[NPDisabled] [bit] NOT NULL ,
+	[TCPDisabled] [bit] NULL ,
+	[DoNotReport] [bit] NOT NULL ,
+	[Reason] [varchar] (255) NULL 
+) ON [PRIMARY]
+GO
+
+

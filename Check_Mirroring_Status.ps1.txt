@@ -1,0 +1,48 @@
+ Check_Mirroring_Status SERVER\INSTANCENAME
+
+
+
+
+
+# ======================================================================================================================
+# 
+# NAME : ????Check_Mirroring_Status.ps1
+# 
+# AUTHOR : ????Eric SIMBOZEL
+# DATE : ????03/2012
+# 
+# COMMENT: ????This script checks Database(s) Mirroring Status
+# ARGS :????Server\INSTANCENAME
+# =======================================================================================================================
+$srv=$args[0]
+# Check_Mirroring_Status.ps1
+[System.Reflection.Assembly]::LoadWithPartialName("Microsoft.SqlServer.Smo") | Out-Null;
+# Servers to check
+$sqlservers = @("$srv"); # Can add other Instances separate by comma.
+foreach($server in $sqlservers)
+{
+????$srv = New-Object "Microsoft.SqlServer.Management.Smo.Server" $server;
+????# Get mirrored databases
+????$databases = $srv.Databases | Where-Object {$_.IsMirroringEnabled -eq $true}
+????foreach ($db in $databases)
+????{
+????if ($db.MirroringStatus -ne [Microsoft.SqlServer.Management.Smo.MirroringStatus]::Synchronized)
+????{
+????write-host " $server : Error on database: " +$db.Name
+????$Msg="$server Database(s) $db not synchronised $db.MirroringStatus"
+????D:\POWERSQL\SENDMAIL\Mail.ps1 "Mirroring $server status" " $Msg"
+????}
+????else
+???? {
+????$db | Select-Object -Property Name, MirroringStatus | Format-Table -AutoSize;
+????$Msg="$server Database $db synchronised "
+????D:\POWERSQL\SENDMAIL\Mail.ps1 "$server Database $db Mirroring status" " $Msg"
+???? }
+????
+????}
+}
+
+
+
+
+
